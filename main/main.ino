@@ -19,11 +19,17 @@ ControllerPtr myController;
 float leftX = 0, leftY = 0;
 float throttle = 0;
 float brake = 0;
+// Previous A button state for edge detection
+bool prevAState = false;
 
 // --- Constants ---
 const float EPSILON = 0.1;  // Deadzone threshold
 const int PWM_MAX = 255;
 const float RAMP_FACTOR = 0.15;  // Smooth acceleration
+
+// ESP32 + buzzer passivo: “bips” e chirps R2‑D2
+const int BUZZER_PIN = 18; // chosen to avoid 32,33,25,13,15 and other used pins
+const int BUZZER_CH = 4;   // use a dedicated LEDC channel for tones
 
 // --- Current output state ---
 float leftMotor = 0;
@@ -48,6 +54,31 @@ String weaponDescriptor(float speed) {
   if (fabs(speed) < EPSILON) return "stopped";
   if (speed > 0) return "spinning clockwise";
   return "spinning counterclockwise";
+}
+
+// --- Buzzer functions ---
+void chirp(int f0, int f1, int steps, int hold_ms) {
+  int df = (f1 - f0) / steps;
+  for (int i = 0; i <= steps; i++) {
+    // ledcWriteTone takes the channel number and frequency
+    ledcWriteTone(BUZZER_CH, f0 + i * df);
+    delay(hold_ms);
+  }
+  ledcWriteTone(BUZZER_CH, 0); // silence
+}
+
+void beep(int f, int ms) {
+  ledcWriteTone(BUZZER_CH, f);
+  delay(ms);
+  ledcWriteTone(BUZZER_CH, 0);
+  delay(40);
+}
+
+void speak() {
+  // Short R2-like sequence provided by the user
+  beep(2200, 90); beep(3000, 70); chirp(1200, 3200, 12, 15);
+  beep(2600, 80); chirp(3400, 1800, 10, 18); beep(2800, 60);
+  delay(400);
 }
 
 // --- Motor Control ---
@@ -88,10 +119,16 @@ void setup() {
   ledcSetup(2, 5000, 8);
   ledcSetup(3, 5000, 8);
 
+  // Setup a dedicated PWM channel for the buzzer (non-conflicting)
+  ledcSetup(BUZZER_CH, 2000, 8);
+
   ledcAttachPin(ENA, 1);
   ledcAttachPin(ENB, 2);
   ledcAttachPin(RPWM, 0);
   ledcAttachPin(LPWM, 3);
+
+  // Attach buzzer pin to its LEDC channel
+  ledcAttachPin(BUZZER_PIN, BUZZER_CH);
 
   pinMode(IN1, OUTPUT);
   pinMode(IN2, OUTPUT);
@@ -122,6 +159,8 @@ void loop() {
     leftY = -myController->axisY() / 512.0;
     throttle = myController->throttle() / 512.0;
     brake = myController->brake() / 512.0;
+    
+    bool currA = myController->a();
 
     // Weapon target: throttle drives forward, brake drives reverse.
     // If both pressed they cancel: targetWeapon = throttle - brake
@@ -140,14 +179,19 @@ void loop() {
     setMotor(IN3, IN4, ENB, rightMotor);
     setWeapon(weaponSpeed);
 
+    if (currA && !prevAState) {
+      speak();
+    }
+    prevAState = currA;
+
     // Telemetry
     Serial.print("LX:"); Serial.print(leftX, 2);
     Serial.print("  LY:"); Serial.print(leftY, 2);
-  Serial.print("  Throttle:"); Serial.print(throttle, 2);
-  Serial.print("  Brake:"); Serial.print(brake, 2);
-  Serial.print("  Movement: "); Serial.print(movementDescriptor(leftMotor, rightMotor));
-  Serial.print("  Weapon: "); Serial.print(weaponDescriptor(weaponSpeed));
-  Serial.print("  Wspd:"); Serial.println(weaponSpeed, 2);
+    Serial.print("  Throttle:"); Serial.print(throttle, 2);
+    Serial.print("  Brake:"); Serial.print(brake, 2);
+    Serial.print("  Movement: "); Serial.print(movementDescriptor(leftMotor, rightMotor));
+    Serial.print("  Weapon: "); Serial.print(weaponDescriptor(weaponSpeed));
+    Serial.print("  Wspd:"); Serial.println(weaponSpeed, 2);
   }
   delay(50);
 }
