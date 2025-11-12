@@ -16,7 +16,7 @@
 
 // --- Control Variables ---
 ControllerPtr myController;
-float leftX = 0, leftY = 0;
+float rightX = 0, leftY = 0;
 float throttle = 0;
 float brake = 0;
 // Previous A button state for edge detection
@@ -216,7 +216,7 @@ void loop() {
   BP32.update();
 
   if (myController && myController->isConnected()) {
-    leftX = myController->axisX() / 512.0;
+    rightX = myController->axisRX() / 512.0;
     leftY = -myController->axisY() / 512.0;
     throttle = myController->throttle() / 512.0;
     brake = myController->brake() / 512.0;
@@ -227,8 +227,8 @@ void loop() {
     // If both pressed they cancel: targetWeapon = throttle - brake
     float targetWeapon = constrain(throttle - brake, -1, 1);
 
-    float targetLeft = constrain(leftY + leftX, -1, 1);
-    float targetRight = constrain(leftY - leftX, -1, 1);
+    float targetLeft = constrain(leftY + rightX, -1, 1);
+    float targetRight = constrain(leftY - rightX, -1, 1);
 
     leftMotor = smoothChange(leftMotor, targetLeft, RAMP_FACTOR);
     rightMotor = smoothChange(rightMotor, targetRight, RAMP_FACTOR);
@@ -236,8 +236,8 @@ void loop() {
 
     // Apply outputs
     // Note: ledcWrite expects a channel number (we attached ENA to channel 1 and ENB to channel 2)
-    setMotor(IN1, IN2, ENA, leftMotor);
-    setMotor(IN3, IN4, ENB, rightMotor);
+    setMotor(IN2, IN1, ENB, leftMotor);
+    setMotor(IN4, IN3, ENA, rightMotor);
     setWeapon(weaponSpeed);
 
     if (currA && !prevAState) {
@@ -256,3 +256,4 @@ void loop() {
   }
   delay(50);
 }
+
