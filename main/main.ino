@@ -27,7 +27,7 @@ const float EPSILON = 0.1;  // Deadzone threshold
 const int PWM_MAX = 255;
 const float RAMP_FACTOR = 0.15;  // Smooth acceleration
 
-// ESP32 + buzzer passivo: “bips” e chirps R2‑D2
+// ESP32 + buzzer passivo: GǣbipsGǥ e chirps R2G��D2
 const int BUZZER_PIN = 18; // chosen to avoid 32,33,25,13,15 and other used pins
 const int BUZZER_CH = 4;   // use a dedicated LEDC channel for tones
 
@@ -80,6 +80,67 @@ void speak() {
   beep(2600, 80); chirp(3400, 1800, 10, 18); beep(2800, 60);
   delay(400);
 }
+
+void whistle(int f0, int f1, int tempo_ms) {
+  int steps = 40;
+  int hold = tempo_ms / steps;
+  int df = (f1 - f0) / steps;
+  for (int i = 0; i <= steps; i++) {
+    ledcWriteTone(BUZZER_PIN, f0 + i*df);
+    delay(hold);
+  }
+  ledcWriteTone(BUZZER_PIN, 0);
+  delay(30);
+}
+
+// “scream” (agudo descendente, efeito alarme)
+void scream(int f0, int f1, int tempo_ms) {
+  int steps = 25;
+  int hold = tempo_ms / steps;
+  int df = (f1 - f0) / steps;
+  for (int i = 0; i <= steps; i++) {
+    ledcWriteTone(BUZZER_PIN, f0 - i*df);
+    delay(hold);
+  }
+  ledcWriteTone(BUZZER_PIN, 0);
+  delay(80);
+}
+
+// “trill” (efeito de alternância rápida entre dois tons)
+void trill(int fA, int fB, int ciclos, int dt_ms) {
+  for (int i = 0; i < ciclos; i++) {
+    ledcWriteTone(BUZZER_PIN, fA);
+    delay(dt_ms);
+    ledcWriteTone(BUZZER_PIN, fB);
+    delay(dt_ms);
+  }
+  ledcWriteTone(BUZZER_PIN, 0);
+  delay(40);
+}
+
+
+void r2d2_gentle_chirp() {
+  beep(2100, 60);
+  whistle(2100, 3200, 140);
+  trill(1700, 2200, 8, 13);
+  beep(3200, 70);
+}
+
+void r2d2_excited() {
+  chirp(1500, 3500, 16, 10);
+  trill(3200, 2600, 8, 10);
+  chirp(1800, 3500, 10, 15);
+  trill(2700, 2400, 7, 9);
+}
+
+void r2d2_alarm() {
+  scream(4100, 1500, 120);
+  trill(1200, 670, 14, 13);
+  beep(800, 60);
+  beep(2000, 30);
+  scream(4000, 1500, 110);
+}
+
 
 // --- Motor Control ---
 void setMotor(int in1, int in2, int channel, float speed) {
