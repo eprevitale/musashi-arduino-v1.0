@@ -20,14 +20,16 @@ float rightX = 0, leftY = 0;
 float throttle = 0;
 float brake = 0;
 // Previous A button state for edge detection
-bool prevAState = false;
+bool prevAState = false, prevBState = false, prevXState = false, prevYState = false;
+// Connection state for noise control
+int connectionState = 1;
 
 // --- Constants ---
 const float EPSILON = 0.1;  // Deadzone threshold
 const int PWM_MAX = 255;
 const float RAMP_FACTOR = 0.15;  // Smooth acceleration
 
-// ESP32 + buzzer passivo: GǣbipsGǥ e chirps R2G��D2
+// ESP32 + buzzer passivo: “bips” e chirps R2‑D2
 const int BUZZER_PIN = 18; // chosen to avoid 32,33,25,13,15 and other used pins
 const int BUZZER_CH = 4;   // use a dedicated LEDC channel for tones
 
@@ -74,13 +76,7 @@ void beep(int f, int ms) {
   delay(40);
 }
 
-void speak() {
-  // Short R2-like sequence provided by the user
-  beep(2200, 90); beep(3000, 70); chirp(1200, 3200, 12, 15);
-  beep(2600, 80); chirp(3400, 1800, 10, 18); beep(2800, 60);
-  delay(400);
-}
-
+// “whistle” (assobio, deslize suave de frequência)
 void whistle(int f0, int f1, int tempo_ms) {
   int steps = 40;
   int hold = tempo_ms / steps;
@@ -118,6 +114,12 @@ void trill(int fA, int fB, int ciclos, int dt_ms) {
   delay(40);
 }
 
+void speak() {
+  // Short R2-like sequence provided by the user
+  beep(2200, 90); beep(3000, 70); chirp(1200, 3200, 12, 15);
+  beep(2600, 80); chirp(3400, 1800, 10, 18); beep(2800, 60);
+  delay(400);
+}
 
 void r2d2_gentle_chirp() {
   beep(2100, 60);
@@ -173,6 +175,7 @@ void setWeapon(float speed) {
 void setup() {
   Serial.begin(115200);
   BP32.setup(&onConnectedController, &onDisconnectedController);
+  // BP32.enableNewBluetoothConnections(false);
 
   // Setup PWM channels for motors
   ledcSetup(0, 5000, 8);
@@ -203,12 +206,57 @@ void setup() {
 
 void onConnectedController(ControllerPtr ctl) {
   myController = ctl;
-  Serial.println("Controller connected!");
+
+  // Print controller Bluetooth address (6 bytes in hex)
+  auto props = myController->getProperties();
+  uint8_t* btAddr = props.btaddr;
+
+  // Build BT address string like "9C:AA:1B:F1:4C:21"
+  String btStr = "";
+  char buf[3];
+  for (int i = 0; i < 6; i++) {
+    sprintf(buf, "%02X", btAddr[i]);
+    btStr += String(buf);
+    if (i < 5) btStr += ":";
+  }
+
+  Serial.print("Controller connected: ");
+  Serial.println(btStr);
+
+  // Editable list of allowed Bluetooth addresses (only these may stay connected)
+  static const char* allowedBT[] = {
+    "9C:AA:1B:F1:4C:21",
+    // Add more addresses here, one per line, e.g.:
+    // "12:34:56:78:9A:BC",
+  };
+  const size_t allowedCount = sizeof(allowedBT) / sizeof(allowedBT[0]);
+
+  // Check if the connected controller is in the allowed list
+  bool authorized = false;
+  for (size_t i = 0; i < allowedCount; ++i) {
+    if (btStr.equals(allowedBT[i])) {
+      authorized = true;
+      break;
+    }
+  }
+
+  if (!authorized) {
+    Serial.println("Unauthorized controller - disconnecting.");
+    myController->disconnect();
+    return;
+  }
+
+  connectionState = 2;
+
+  // connected noise
+  speak();
 }
 
 void onDisconnectedController(ControllerPtr ctl) {
   myController = nullptr;
   Serial.println("Controller disconnected!");
+
+  connectionState = 0;
 }
 
 // --- Main Loop ---
@@ -220,8 +268,6 @@ void loop() {
     leftY = -myController->axisY() / 512.0;
     throttle = myController->throttle() / 512.0;
     brake = myController->brake() / 512.0;
-    
-    bool currA = myController->a();
 
     // Weapon target: throttle drives forward, brake drives reverse.
     // If both pressed they cancel: targetWeapon = throttle - brake
@@ -234,19 +280,42 @@ void loop() {
     rightMotor = smoothChange(rightMotor, targetRight, RAMP_FACTOR);
     weaponSpeed = smoothChange(weaponSpeed, targetWeapon, RAMP_FACTOR);
 
+    Serial.print("Left Motor: "); Serial.print(leftMotor);
+    Serial.print("Right Motor:"); Serial.println(rightMotor);
+
     // Apply outputs
     // Note: ledcWrite expects a channel number (we attached ENA to channel 1 and ENB to channel 2)
     setMotor(IN2, IN1, ENB, leftMotor);
     setMotor(IN4, IN3, ENA, rightMotor);
     setWeapon(weaponSpeed);
 
+
+    bool currA = myController->a();
     if (currA && !prevAState) {
       speak();
     }
     prevAState = currA;
 
+    bool currB = myController->b();
+    if (currB && !prevBState) {
+      r2d2_alarm();
+    }
+    prevBState = currB;
+
+    bool currX = myController->x();
+    if (currX && !prevXState) {
+      r2d2_gentle_chirp();
+    }
+    prevXState = currX;
+
+    bool currY = myController->y();
+    if (currY && !prevYState) {
+      r2d2_excited();
+    }
+    prevYState = currY;
+
     // Telemetry
-    Serial.print("LX:"); Serial.print(leftX, 2);
+    Serial.print("LX:"); Serial.print(rightX, 2);
     Serial.print("  LY:"); Serial.print(leftY, 2);
     Serial.print("  Throttle:"); Serial.print(throttle, 2);
     Serial.print("  Brake:"); Serial.print(brake, 2);
@@ -254,6 +323,11 @@ void loop() {
     Serial.print("  Weapon: "); Serial.print(weaponDescriptor(weaponSpeed));
     Serial.print("  Wspd:"); Serial.println(weaponSpeed, 2);
   }
-  delay(50);
-}
+  // delay(50);
 
+  if (connectionState == 0) {
+    r2d2_excited();
+  } else if (connectionState == 1) {
+    r2d2_alarm();
+  }
+}
